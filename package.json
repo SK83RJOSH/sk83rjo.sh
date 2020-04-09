@@ -1,0 +1,21 @@
+{
+  "name": "sk83rjo.sh",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "serve": "http-server -c-1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SK83RJOSH/sk83rjo.sh.git"
+  },
+  "author": "Joshua Wood",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/SK83RJOSH/sk83rjo.sh/issues"
+  },
+  "homepage": "https://github.com/SK83RJOSH/sk83rjo.sh#readme",
+  "dependencies": {
+    "http-server": "^0.12.1"
+  }
+}
