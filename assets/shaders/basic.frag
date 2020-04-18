@@ -33,5 +33,6 @@ void main()
 	vec3 reflect_direction = reflect(-LIGHT_DIR, normal);
 	float specular = pow(max(dot(view_direction, reflect_direction), 0.0), 32.0);
 
+	//FragColor = vec4((ProjectionMatrix * ViewMatrix * vec4(normal, 0.0)).xyz, 1.0);
 	FragColor = min(color * vec4(vec3(lambert + specular), 1.0), 1.0);
 }

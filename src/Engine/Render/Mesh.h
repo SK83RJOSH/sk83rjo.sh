@@ -48,7 +48,6 @@ struct SMesh
 	{
 		std::string m_Name;
 		size_t m_IndexOffset = 0;
-		size_t m_VertexOffset = 0;
 		size_t m_IndexCount = 0;
 		size_t m_Material = 0;
 	};
