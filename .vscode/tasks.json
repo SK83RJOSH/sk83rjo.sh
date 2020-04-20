@@ -11,6 +11,13 @@
 				"$gcc"
 			],
 			"group": "build"
+		},
+		{
+			"type": "npm",
+			"script": "serve",
+			"problemMatcher": [],
+			"label": "npm: serve",
+			"detail": "http-server -c-1"
 		}
 	]
 }

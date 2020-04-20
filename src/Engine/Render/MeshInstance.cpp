@@ -69,6 +69,11 @@ void CMeshInstance::CreateBuffers()
 	glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, sizeof(SVertexData), OFFSET(SVertexData, m_UV));
 #undef OFFSET
 
+	printf("Indices, indices size, buffer size: %lu, %lu, %lu\n",
+		   m_Mesh->m_Indices.size(),
+		   sizeof(size_t),
+		   m_Mesh->m_Indices.size() * sizeof(size_t));
+
 	// Setup indices
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_VBO[1]);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_Mesh->m_Indices.size() * sizeof(m_Mesh->m_Indices[0]), m_Mesh->m_Indices.data(), GL_STATIC_DRAW);

@@ -3,14 +3,16 @@
         {
             "name": "Emscripten",
             "includePath": [
-                "${EMSDK}/upstream/emscripten/system/**",
-                "${workspaceFolder}/lib/**",
+                "${EMSCRIPTEN_ROOT_PATH}/system/**",
+                "${workspaceFolder}/lib/Eigen/**",
+                "${workspaceFolder}/lib/assimp/**",
+                "${workspaceFolder}/build/lib/assimp/include/**",
                 "${workspaceFolder}/src/**"
             ],
             "defines": [
                 "__EMSCRIPTEN__"
             ],
-            "compilerPath": "",
+            "compilerPath": "${EMSCRIPTEN_ROOT_PATH}/em++",
             "cStandard": "c11",
             "cppStandard": "c++17",
             "intelliSenseMode": "gcc-x64",

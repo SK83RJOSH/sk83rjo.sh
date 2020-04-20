@@ -63,8 +63,8 @@ void CMaterialInstance::CreateTexture(size_t index, HTexture texture)
 
 	glBindTexture(GL_TEXTURE_2D, m_Textures[index]);
 	glTexImage2D(GL_TEXTURE_2D, 0, mode, texture->m_Width, texture->m_Height, 0, mode, GL_UNSIGNED_BYTE, texture->m_Buffer.data());
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 }
 
 void CMaterialInstance::CreateTextures()
@@ -72,17 +72,13 @@ void CMaterialInstance::CreateTextures()
 	DestroyTextures();
 	glGenTextures(m_Textures.size(), m_Textures.data());
 
-	printf("%s\n", m_Material->m_Name.c_str());
-
 	if (m_Material->m_AlbedoTexture != nullptr)
 	{
-		printf("Albedo\n");
 		CreateTexture(0, m_Material->m_AlbedoTexture);
 	}
 
 	if (m_Material->m_DetailTexture != nullptr)
 	{
-		printf("Detail\n");
 		CreateTexture(1, m_Material->m_DetailTexture);
 	}
 }

@@ -7,39 +7,35 @@
 
 #include <algorithm>
 #include <vector>
+#include <map>
 
 #include <SDL_image.h>
 #include <SDL_surface.h>
-#define TINYOBJLOADER_IMPLEMENTATION
-#include <tiny_obj_loader.h>
-#undef TINYOBJLOADER_IMPLEMENTATION
+
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+
+static Assimp::Importer importer;
 
 bool NUtils::LoadMesh(const char* filename, const char* asset_path, NRender::SMesh& mesh)
 {
-	tinyobj::ObjReader reader;
-	reader.ParseFromFile(filename);
-
-	if (!reader.Warning().empty())
+	// Load triangles from the scene
+	importer.SetPropertyInteger(AI_CONFIG_PP_SBP_REMOVE, aiPrimitiveType_POINT | aiPrimitiveType_LINE);
+	const aiScene* ai_scene = importer.ReadFile(filename, aiProcessPreset_TargetRealtime_Quality | aiProcess_FlipUVs | aiProcess_FixInfacingNormals | aiProcess_ValidateDataStructure);
+	if (!ai_scene)
 	{
-		printf("Warning: %s\n", reader.Warning().c_str());
-	}
-
-	if (!reader.Error().empty())
-	{
-		printf("Error: %s\n", reader.Error().c_str());
-	}
-
-	if (!reader.Valid())
-	{
-		printf("Failed to load: %s\n", filename);
+		printf("%s\n", importer.GetErrorString());
 		return false;
 	}
 
+	// Material helpers
 	using HTexture = std::shared_ptr<NRender::STexture>;
-
 	std::map<std::string, HTexture> texture_cache;
 
 	auto GetOrCreateTexture = [&texture_cache](std::string path) -> HTexture {
+		path = std::string("assets/models/textures/") + path;
+
 		auto texture_pair = texture_cache.find(path);
 
 		if (texture_pair != texture_cache.end())
@@ -51,10 +47,11 @@ bool NUtils::LoadMesh(const char* filename, const char* asset_path, NRender::SMe
 
 		if (surface == nullptr)
 		{
+			printf("Could not load texture: %s\n", path.c_str());
 			return HTexture(nullptr);
 		}
 
-		// We're going to assume 8-bits per pixels from here on out
+		// We're going to assume 8-bits per channel from here on out
 		HTexture texture = std::make_shared<NRender::STexture>();
 		texture->m_Width = surface->w;
 		texture->m_Height = surface->h;
@@ -73,226 +70,121 @@ bool NUtils::LoadMesh(const char* filename, const char* asset_path, NRender::SMe
 		// Free the surface
 		SDL_FreeSurface(surface);
 
+		// Store the texture in our cache
+		texture_cache.emplace(path, texture);
+
 		return texture;
 	};
 
-	mesh.m_Materials.reserve(reader.GetMaterials().size());
+	// Preload materials vector
+	mesh.m_Materials.resize(ai_scene->mNumMaterials);
 
-	const std::string base_path("assets/models/textures/");
-
-	for (const tinyobj::material_t& mat : reader.GetMaterials())
+	for (size_t i = 0; i < ai_scene->mNumMaterials; ++i)
 	{
-		printf("%s, %s, %s\n", mat.name.c_str(), mat.diffuse_texname.c_str(), mat.bump_texname.c_str());
-		std::shared_ptr<NRender::SMaterial> material = std::make_shared<NRender::SMaterial>();
-		material->m_Name = mat.name;
-		material->m_AlbedoTexture = GetOrCreateTexture(base_path + mat.diffuse_texname);
-		material->m_DetailTexture = GetOrCreateTexture(base_path + mat.bump_texname);
+		const aiMaterial* ai_material = ai_scene->mMaterials[i];
+		NRender::HMaterial material = std::make_shared<NRender::SMaterial>();
 
-		mesh.m_Materials.push_back(material);
-	}
+		aiString name;
+		aiGetMaterialString(ai_material, AI_MATKEY_NAME, &name);
+		material->m_Name = name.C_Str();
 
-	const tinyobj::attrib_t& attributes = reader.GetAttrib();
-	mesh.m_SubMeshes.reserve(reader.GetShapes().size());
+		float transparency = 0.0f;
+		aiGetMaterialFloat(ai_material, AI_MATKEY_OPACITY, &transparency);
+		printf("%f\n", transparency);
 
-	// Create vertices
-	mesh.m_Vertices.resize(attributes.vertices.size(), NRender::SMesh::SVertexData());
-	for (size_t i = 0; i < attributes.vertices.size() / 3; ++i)
-	{
-		NRender::SMesh::SVertexData& vertex_data = mesh.m_Vertices[i];
+		if (ai_material->GetTextureCount(aiTextureType_DIFFUSE) > 0)
+		{
+			aiString path;
+			ai_material->GetTexture(aiTextureType_DIFFUSE, 0, &path);
+			material->m_AlbedoTexture = GetOrCreateTexture(path.C_Str());
+		}
 
-		vertex_data.m_Position = {
-			attributes.vertices[i * 3 + 0],
-			attributes.vertices[i * 3 + 1],
-			attributes.vertices[i * 3 + 2]
+		if (ai_material->GetTextureCount(aiTextureType_NORMALS) > 0)
+		{
+			aiString path;
+			ai_material->GetTexture(aiTextureType_NORMALS, 0, &path);
+			material->m_DetailTexture = GetOrCreateTexture(path.C_Str());
 		};
 
-		if (!attributes.colors.empty())
-		{
-			vertex_data.m_Color = {
-				attributes.colors[i * 3 + 0],
-				attributes.colors[i * 3 + 1],
-				attributes.colors[i * 3 + 2]
-			};
-		}
+		mesh.m_Materials[i] = material;
 	}
 
-	// Create map of vertex groups
-	struct SVertexIndices
+	// Count total vertices and indices
+	size_t vertex_count = 0;
+	size_t index_count = 0;
+	for (size_t i = 0; i < ai_scene->mNumMeshes; ++i)
 	{
-		size_t m_VertexIndex;
-		size_t m_CoordIndex;
-	};
-	struct SVertexGroup
-	{
-		std::vector<SVertexIndices> m_Indices;
-		std::vector<size_t> m_SubMeshes;
-	};
-	std::map<size_t, SVertexGroup> vertex_groups;
-
-	// Create indices
-	for (const tinyobj::shape_t& shape : reader.GetShapes())
-	{
-		// Would be nice to preload the entire indices array, but this will do
-		mesh.m_Indices.reserve(mesh.m_Indices.size() + shape.mesh.indices.size());
-
-		NRender::SMesh::SSubMesh sub_mesh;
-		sub_mesh.m_Name = shape.name;
-		sub_mesh.m_IndexCount = shape.mesh.indices.size();
-		sub_mesh.m_IndexOffset = mesh.m_Indices.size();
-		sub_mesh.m_Material = shape.mesh.material_ids.front();
-
-		for (auto& indices : shape.mesh.indices)
-		{
-			SVertexGroup& vertex_group = vertex_groups[indices.vertex_index];
-			vertex_group.m_SubMeshes.push_back(mesh.m_SubMeshes.size());
-			vertex_group.m_Indices.push_back({ mesh.m_Indices.size(),
-											   static_cast<size_t>(indices.texcoord_index) });
-
-			mesh.m_Indices.push_back(indices.vertex_index);
-		}
-
-		mesh.m_SubMeshes.push_back(sub_mesh);
+		vertex_count += ai_scene->mMeshes[i]->mNumVertices;
+		index_count += ai_scene->mMeshes[i]->mNumFaces * 3;
 	}
 
-	// Handle UVs and duplication of vertices
-	for (const auto& entry : vertex_groups)
+	// Create mesh and preload vectors
+	mesh.m_Vertices.resize(vertex_count, {});
+	mesh.m_Indices.resize(index_count, 0);
+	mesh.m_SubMeshes.resize(ai_scene->mNumMeshes, {});
+
+	// Populate vertices, indices, and submeshes
+	size_t current_vertex = 0;
+	size_t current_index = 0;
+	for (size_t i = 0; i < ai_scene->mNumMeshes; ++i)
 	{
-		const size_t current_vertex_index = entry.first;
-		SVertexGroup vertex_group = entry.second;
-		std::vector<NRender::SMesh::SVertexData>& vertices = mesh.m_Vertices;
-		std::vector<size_t> unique_coords;
+		const aiMesh* ai_mesh = ai_scene->mMeshes[i];
 
-		// Build a list of unique coordinates (emscripten has a bug with std::set)
-		for (const auto indice : vertex_group.m_Indices)
+		// Populate vertices
+		for (size_t v = 0; v < ai_mesh->mNumVertices; ++v)
 		{
-			const bool unique = std::none_of(
-				unique_coords.begin(),
-				unique_coords.end(),
-				[&indice](size_t coord_index) -> bool { return coord_index == indice.m_CoordIndex; });
+			NRender::SMesh::SVertexData& vertex_data = mesh.m_Vertices[current_vertex + v];
 
-			if (unique)
+			if (ai_mesh->HasPositions())
 			{
-				unique_coords.emplace_back(indice.m_CoordIndex);
+				const aiVector3D& position = ai_mesh->mVertices[v];
+				vertex_data.m_Position = { position.x, position.y, position.z };
+			}
+
+			if (ai_mesh->HasVertexColors(0))
+			{
+				const aiColor4D& color = ai_mesh->mColors[0][v];
+				vertex_data.m_Color = { color.r, color.g, color.b };
+			}
+
+			if (ai_mesh->HasNormals() && ai_mesh->HasTangentsAndBitangents())
+			{
+				const CVector3f normal(&ai_mesh->mNormals[v].x);
+				const CVector3f tangent(&ai_mesh->mTangents[v].x);
+				const CVector3f bitangent(&ai_mesh->mBitangents[v].x);
+				const float w = normal.cross(tangent).dot(bitangent) < 0.0f ? -1.0f : 1.0f;	 // This might be broken
+				vertex_data.m_Normal = { normal.x(), normal.y(), normal.z() };
+				vertex_data.m_Tangent = { tangent.x(), tangent.y(), tangent.z(), w };
+			}
+
+			if (ai_mesh->HasTextureCoords(0))
+			{
+				const aiVector3D& coord = ai_mesh->mTextureCoords[0][v];
+				vertex_data.m_UV = { coord.x, coord.y };
 			}
 		}
 
-		// Store the current size of the vertex array
-		const size_t last = vertices.size();
-		// Calculate how many duplicate vertices we need, if any
-		const size_t new_vertices = unique_coords.size() - 1;
-
-		// Copy this vertex n times at the end of the array
-		vertices.reserve(last + new_vertices);
-
-		// Update indices
-		for (size_t i = 0; i < unique_coords.size(); ++i)
+		// Populate indices
+		for (size_t f = 0; f < ai_mesh->mNumFaces; ++f)
 		{
-			const size_t coord_index = unique_coords[i];
-			const size_t new_index = (i == 0 ? current_vertex_index : vertices.size());
-
-			if (i > 0)
-			{
-				vertices.emplace_back(vertices[current_vertex_index]);
-			}
-
-			for (SVertexIndices& indices : vertex_group.m_Indices)
-			{
-				if (indices.m_CoordIndex == coord_index)
-				{
-					mesh.m_Indices[indices.m_VertexIndex] = new_index;
-				}
-			}
-
-			vertices[new_index].m_UV = {
-				attributes.texcoords[coord_index * 2 + 0],
-				1.0f - attributes.texcoords[coord_index * 2 + 1]
-			};
+			const aiFace& face = ai_mesh->mFaces[f];
+			mesh.m_Indices[current_index + (f * 3) + 0] = current_vertex + face.mIndices[0];
+			mesh.m_Indices[current_index + (f * 3) + 1] = current_vertex + face.mIndices[1];
+			mesh.m_Indices[current_index + (f * 3) + 2] = current_vertex + face.mIndices[2];
 		}
-	}
 
-	// Create vertex normal data
-	struct SVertexNormal
-	{
-		CVector3f m_Normal = CVector3f::Zero();
-		CVector3f m_Tangent = CVector3f::Zero();
-		CVector3f m_Bitangent = CVector3f::Zero();
-	};
-	std::vector<SVertexNormal> vertex_normals;
-	vertex_normals.resize(mesh.m_Vertices.size(), SVertexNormal());
+		// Setup submesh
+		NRender::SMesh::SSubMesh& sub_mesh = mesh.m_SubMeshes[i];
+		sub_mesh.m_Name = ai_mesh->mName.C_Str();
+		sub_mesh.m_VertexCount = ai_mesh->mNumVertices;
+		sub_mesh.m_VertexOffset = current_vertex;
+		sub_mesh.m_IndexCount = ai_mesh->mNumFaces * 3;
+		sub_mesh.m_IndexOffset = current_index;
+		sub_mesh.m_Material = ai_mesh->mMaterialIndex;
 
-	// Calculate vertex normal and tangents
-	for (size_t i = 0; i < mesh.m_Indices.size() / 3; ++i)
-	{
-		const size_t index_0 = mesh.m_Indices[i * 3 + 0];
-		const size_t index_1 = mesh.m_Indices[i * 3 + 1];
-		const size_t index_2 = mesh.m_Indices[i * 3 + 2];
-
-		SVertexNormal& vertex_normal_0 = vertex_normals[index_0];
-		SVertexNormal& vertex_normal_1 = vertex_normals[index_1];
-		SVertexNormal& vertex_normal_2 = vertex_normals[index_2];
-
-		const CVector3f position_0(&mesh.m_Vertices[index_0].m_Position.m_X);
-		const CVector3f position_1(&mesh.m_Vertices[index_1].m_Position.m_X);
-		const CVector3f position_2(&mesh.m_Vertices[index_2].m_Position.m_X);
-		const CVector3f edge_0 = position_1 - position_0;
-		const CVector3f edge_1 = position_2 - position_0;
-
-		const CVector2f uv_0(&mesh.m_Vertices[index_0].m_UV.m_X);
-		const CVector2f uv_1(&mesh.m_Vertices[index_1].m_UV.m_X);
-		const CVector2f uv_2(&mesh.m_Vertices[index_2].m_UV.m_X);
-		const CVector2f delta_uv_0 = uv_1 - uv_0;
-		const CVector2f delta_uv_1 = uv_2 - uv_0;
-
-		float f = 1.0f / (delta_uv_0.x() * delta_uv_1.y() - delta_uv_1.x() * delta_uv_0.y());
-
-		CVector3f normal = edge_0.cross(edge_1);
-		const CVector3f tangent = CVector3f(
-			f * (delta_uv_1.y() * edge_0.x() - delta_uv_0.y() * edge_1.x()),
-			f * (delta_uv_1.y() * edge_0.y() - delta_uv_0.y() * edge_1.y()),
-			f * (delta_uv_1.y() * edge_0.z() - delta_uv_0.y() * edge_1.z()));
-		const CVector3f bitangent = CVector3f(
-			f * (-delta_uv_1.x() * edge_0.x() + delta_uv_0.x() * edge_1.x()),
-			f * (-delta_uv_1.x() * edge_0.y() + delta_uv_0.x() * edge_1.y()),
-			f * (-delta_uv_1.x() * edge_0.z() + delta_uv_0.x() * edge_1.z()));
-
-		vertex_normal_0.m_Normal += normal;
-		vertex_normal_1.m_Normal += normal;
-		vertex_normal_2.m_Normal += normal;
-
-		vertex_normal_0.m_Tangent += tangent;
-		vertex_normal_1.m_Tangent += tangent;
-		vertex_normal_2.m_Tangent += tangent;
-
-		vertex_normal_0.m_Bitangent += bitangent;
-		vertex_normal_1.m_Bitangent += bitangent;
-		vertex_normal_2.m_Bitangent += bitangent;
-	}
-
-	// Smooth vertex_normals
-	for (size_t i = 0; i < vertex_normals.size(); ++i)
-	{
-		const SVertexNormal& vertex_normal = vertex_normals[i];
-		const CVector3f normal = vertex_normal.m_Normal.normalized();
-		const CVector3f tangent = vertex_normal.m_Tangent;
-		const CVector3f bitangent = vertex_normal.m_Bitangent;
-		const CVector3f ortho_tangent((tangent - normal * normal.dot(tangent)).normalized().data());
-		const float w = normal.cross(tangent).dot(bitangent) < 0.0f ? -1.0f : 1.0f;
-
-		for (const SVertexIndices& indices : vertex_groups[i].m_Indices)
-		{
-			NRender::SMesh::SVertexData& vertex_data = mesh.m_Vertices[mesh.m_Indices[indices.m_VertexIndex]];
-			vertex_data.m_Normal = {
-				normal.x(),
-				normal.y(),
-				normal.z()
-			};
-			vertex_data.m_Tangent = {
-				ortho_tangent.x(),
-				ortho_tangent.y(),
-				ortho_tangent.z(),
-				w
-			};
-		}
+		// Update current indices
+		current_index += ai_mesh->mNumFaces * 3;
+		current_vertex += ai_mesh->mNumVertices;
 	}
 
 	return true;

@@ -40,13 +40,15 @@ struct SMesh
 		SVector3 m_Position;
 		SVector3 m_Normal;
 		SVector4 m_Tangent;
-		SVector3 m_Color;
+		SVector3 m_Color = { 1.0f, 1.0f, 1.0f };
 		SVector2 m_UV;
 	};
 
 	struct SSubMesh
 	{
 		std::string m_Name;
+		size_t m_VertexOffset = 0;
+		size_t m_VertexCount = 0;
 		size_t m_IndexOffset = 0;
 		size_t m_IndexCount = 0;
 		size_t m_Material = 0;

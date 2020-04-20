@@ -1,0 +1,6 @@
+[submodule "lib/Eigen"]
+	path = lib/Eigen
+	url = https://gitlab.com/libeigen/eigen.git
+[submodule "lib/assimp"]
+	path = lib/assimp
+	url = https://github.com/assimp/assimp.git
